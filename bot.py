@@ -6,7 +6,6 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 import anthropic
 import gspread
-from google.oauth2.service_account import Credentials
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,12 +18,7 @@ ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
 
 def get_sheet():
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-    client = gspread.Client(auth=creds)
+    client = gspread.service_account_from_dict(creds_dict)
     sheet = client.open_by_key(SPREADSHEET_ID)
     try:
         ws = sheet.worksheet("Gastos")
