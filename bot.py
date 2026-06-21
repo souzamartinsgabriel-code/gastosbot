@@ -24,7 +24,7 @@ def get_sheet():
         "https://www.googleapis.com/auth/drive",
     ]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-    client = gspread.authorize(creds)
+    client = gspread.Client(auth=creds)
     sheet = client.open_by_key(SPREADSHEET_ID)
     try:
         ws = sheet.worksheet("Gastos")
@@ -63,13 +63,20 @@ Regras:
 - O valor deve ser número float (sem R$)
 - Se a mensagem NÃO for um gasto, responda apenas: null"""
     response = claude.messages.create(
-        model="claude-haiku-4-5",
+        model="claude-opus-4-5",
         max_tokens=200,
         messages=[{"role": "user", "content": prompt}]
     )
     text = response.content[0].text.strip()
-    if text == "null":
+    logger.info(f"Resposta Claude: {text!r}")
+
+    if text.startswith("```"):
+        lines = text.splitlines()
+        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
+
+    if not text or text == "null":
         return None
+
     return json.loads(text)
 
 def gerar_analise(gastos: list, periodo: str) -> str:
@@ -79,7 +86,7 @@ def gerar_analise(gastos: list, periodo: str) -> str:
     gastos_str = "\n".join([f"- {g['Data']} | {g['Descrição']} | {g['Categoria']} | R$ {g['Valor']}" for g in gastos])
     prompt = f"""Analise os gastos de {periodo} e gere um relatório em português.\n\nGASTOS:\n{gastos_str}\n\nTOTAL: R$ {total:.2f}\n\nInclua: resumo por categoria, top 3 maiores gastos, insights e 2-3 sugestões práticas. Use emojis."""
     response = claude.messages.create(
-        model="claude-haiku-4-5",
+        model="claude-opus-4-5",
         max_tokens=1000,
         messages=[{"role": "user", "content": prompt}]
     )
@@ -117,25 +124,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         salvar_gasto(gasto["data"], gasto["descricao"], gasto["categoria"], gasto["valor"])
-        emoji_cat = {
-            "Alimentação": "🍽️",
-            "Transporte": "🚗",
-            "Lazer": "🎉",
-            "Saúde": "💊",
-            "Educação": "📚",
-            "Moradia": "🏠",
-            "Roupas": "👕",
-            "Supermercado": "🛒",
-            "Assinaturas": "📱",
-            "Outros": "📦"
-        }.get(gasto["categoria"], "💸")
-        await update.message.reply_text(
-            f"{emoji_cat} *{gasto['categoria']}* registrado!\n"
-            f"📝 {gasto['descricao']}\n"
-            f"💰 R$ {float(gasto['valor']):.2f}\n"
-            f"📅 {gasto['data']}",
-            parse_mode="Markdown"
-        )
+        emoji_cat = {"Alimentação": "🍽️", "Transporte": "🚗", "Lazer": "🎉", "Saúde": "💊", "Educação": "📚", "Moradia": "🏠", "Roupas": "👕", "Supermercado": "🛒", "Assinaturas": "📱", "Outros": "📦"}.get(gasto["categoria"], "💸")
+        await update.message.reply_text(f"{emoji_cat} *{gasto['categoria']}* registrado!\n📝 {gasto['descricao']}\n💰 R$ {float(gasto['valor']):.2f}\n📅 {gasto['data']}", parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Erro ao salvar no Google Sheets: {e}", exc_info=True)
         await update.message.reply_text("❌ Erro ao salvar. Verifique as configurações do Google Sheets.")
@@ -143,15 +133,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ALLOWED_USER_ID != 0 and update.effective_user.id != ALLOWED_USER_ID:
         return
-    await update.message.reply_text(
-        "👋 Olá! Sou seu assistente de gastos.\n\n"
-        "📌 *Como usar:*\n"
-        "• Mande qualquer gasto: \"Almoço 35\", \"Uber 22,50\"\n"
-        "• Peça \"resumo do mês\" para análise\n"
-        "• Peça \"histórico\" para ver tudo\n\n"
-        "Pode mandar em linguagem natural! 🤙",
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text("👋 Olá! Sou seu assistente de gastos.\n\n📌 *Como usar:*\n• Mande qualquer gasto: \"Almoço 35\", \"Uber 22,50\"\n• Peça \"resumo do mês\" para análise\n• Peça \"histórico\" para ver tudo\n\nPode mandar em linguagem natural! 🤙", parse_mode="Markdown")
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
