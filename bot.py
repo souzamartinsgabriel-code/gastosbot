@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import re
 from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
@@ -16,9 +17,16 @@ GOOGLE_CREDS_JSON = os.environ["GOOGLE_CREDS_JSON"]
 SPREADSHEET_ID = os.environ["SPREADSHEET_ID"]
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
 
+def get_spreadsheet_id():
+    value = SPREADSHEET_ID.strip().strip('"').strip("'")
+    match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', value)
+    if match:
+        return match.group(1)
+    return value
+
 def get_sheet():
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    spreadsheet_id = SPREADSHEET_ID.strip().strip('"').strip("'")
+    spreadsheet_id = get_spreadsheet_id()
     logger.info(f"Conectando à planilha ID: '{spreadsheet_id}' (len={len(spreadsheet_id)})")
     client = gspread.service_account_from_dict(creds_dict)
     sheet = client.open_by_key(spreadsheet_id)
