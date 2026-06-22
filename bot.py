@@ -18,8 +18,10 @@ ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
 
 def get_sheet():
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
+    spreadsheet_id = SPREADSHEET_ID.strip().strip('"').strip("'")
+    logger.info(f"Conectando à planilha ID: '{spreadsheet_id}' (len={len(spreadsheet_id)})")
     client = gspread.service_account_from_dict(creds_dict)
-    sheet = client.open_by_key(SPREADSHEET_ID)
+    sheet = client.open_by_key(spreadsheet_id)
     try:
         ws = sheet.worksheet("Gastos")
     except gspread.exceptions.WorksheetNotFound:
