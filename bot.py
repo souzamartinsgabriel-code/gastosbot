@@ -40,6 +40,12 @@ MESES_PT = {
     "novembro": 11, "dezembro": 12
 }
 
+MESES_NOME = {
+    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+}
+
 MENU_TEXT = """📋 *Comandos disponíveis*
 
 *Registrar gasto:*
@@ -57,6 +63,33 @@ MENU_TEXT = """📋 *Comandos disponíveis*
 
 *Ajuda:*
   • `menu` ou /menu — exibe esta lista"""
+
+
+def parse_valor(valor) -> float:
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    s = str(valor).strip().replace("R$", "").replace(" ", "")
+    if not s:
+        return 0.0
+    # Formato brasileiro com milhar e decimal: 1.500,00
+    if "." in s and "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    # Só vírgula: decimal brasileiro 147,01
+    elif "," in s:
+        s = s.replace(",", ".")
+    return float(s)
+
+
+def fmt(valor: float) -> str:
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def nome_mes(dt: datetime) -> str:
+    return f"{MESES_NOME[dt.month]} {dt.year}"
+
+
+def hoje_meia_noite() -> datetime:
+    return datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def get_spreadsheet_id():
@@ -84,7 +117,7 @@ def get_sheet():
 def salvar_gasto(data: str, descricao: str, categoria: str, valor: float, cartao: str = "Sem cartão"):
     ws = get_sheet()
     dt = datetime.strptime(data, "%Y-%m-%d")
-    ws.append_row([data, descricao, categoria, valor, dt.strftime("%B %Y"), dt.year, cartao])
+    ws.append_row([data, descricao, categoria, round(valor, 2), dt.strftime("%B %Y"), dt.year, cartao])
 
 
 def buscar_todos_gastos() -> list:
@@ -98,7 +131,7 @@ def filtrar_por_periodo(gastos: list, inicio: datetime, fim: datetime) -> list:
             data = datetime.strptime(str(g["Data"]), "%Y-%m-%d")
             if inicio <= data <= fim:
                 resultado.append(g)
-        except:
+        except Exception:
             pass
     return resultado
 
@@ -107,7 +140,10 @@ def resumo_por_categoria(gastos: list) -> dict:
     cats = {}
     for g in gastos:
         cat = g.get("Categoria") or "Outros"
-        cats[cat] = cats.get(cat, 0) + float(g.get("Valor", 0))
+        try:
+            cats[cat] = cats.get(cat, 0) + parse_valor(g.get("Valor", 0))
+        except Exception:
+            pass
     return dict(sorted(cats.items(), key=lambda x: x[1], reverse=True))
 
 
@@ -115,8 +151,23 @@ def resumo_por_cartao(gastos: list) -> dict:
     cartoes = {}
     for g in gastos:
         cartao = g.get("Cartão") or "Sem cartão"
-        cartoes[cartao] = cartoes.get(cartao, 0) + float(g.get("Valor", 0))
+        if not str(cartao).strip():
+            cartao = "Sem cartão"
+        try:
+            cartoes[cartao] = cartoes.get(cartao, 0) + parse_valor(g.get("Valor", 0))
+        except Exception:
+            pass
     return dict(sorted(cartoes.items(), key=lambda x: x[1], reverse=True))
+
+
+def total_gastos(gastos: list) -> float:
+    total = 0.0
+    for g in gastos:
+        try:
+            total += parse_valor(g.get("Valor", 0))
+        except Exception:
+            pass
+    return total
 
 
 def indicador(atual: float, anterior: float) -> str:
@@ -124,8 +175,12 @@ def indicador(atual: float, anterior: float) -> str:
         return "🆕 novo"
     variacao = ((atual - anterior) / anterior) * 100
     if variacao > 10:
+        if variacao > 300:
+            return f"📈 +{fmt(atual - anterior)}"
         return f"📈 +{variacao:.0f}%"
     elif variacao < -10:
+        if variacao < -300:
+            return f"📉 -{fmt(anterior - atual)}"
         return f"📉 {variacao:.0f}%"
     return "➡️ em linha"
 
@@ -141,18 +196,22 @@ def frase_analise(total_atual: float, total_anterior: float, cats_atual: dict, c
         key=lambda x: abs(x[1]), reverse=True
     )[:2]
     detalhes = " e ".join([
-        f"{cat} ({'+' if d > 0 else ''}R${d:.0f})" for cat, d in impactos if abs(d) > 0
+        f"{cat} ({'+' if d > 0 else ''}{fmt(d)})" for cat, d in impactos if abs(d) > 0
     ])
     seta = "📈" if variacao > 0 else "📉"
     direcao = "Alta" if variacao > 0 else "Queda"
-    base = f"{seta} {direcao} de {abs(variacao):.1f}% vs período anterior"
+    if abs(variacao) > 300:
+        diff = fmt(abs(total_atual - total_anterior))
+        base = f"{seta} {direcao} de {diff} vs período anterior"
+    else:
+        base = f"{seta} {direcao} de {abs(variacao):.1f}% vs período anterior"
     return f"{base} — impactado por {detalhes}" if detalhes else base
 
 
 def datas_semana(semanas_atras: int = 0):
-    hoje = datetime.now()
-    seg = hoje - timedelta(days=hoje.weekday())
-    seg_ref = seg - timedelta(weeks=semanas_atras)
+    hoje = hoje_meia_noite()
+    seg_desta = hoje - timedelta(days=hoje.weekday())
+    seg_ref = seg_desta - timedelta(weeks=semanas_atras)
     dom_ref = seg_ref + timedelta(days=6)
     seg_ant = seg_ref - timedelta(weeks=1)
     dom_ant = seg_ant + timedelta(days=6)
@@ -172,8 +231,8 @@ def relatorio_semana(gastos: list, semanas_atras: int = 0) -> str:
     seg_ref, dom_ref, seg_ant, dom_ant = datas_semana(semanas_atras)
     periodo = filtrar_por_periodo(gastos, seg_ref, dom_ref)
     anterior = filtrar_por_periodo(gastos, seg_ant, dom_ant)
-    total = sum(float(g["Valor"]) for g in periodo)
-    total_ant = sum(float(g["Valor"]) for g in anterior)
+    total = total_gastos(periodo)
+    total_ant = total_gastos(anterior)
     cats = resumo_por_categoria(periodo)
     cats_ant = resumo_por_categoria(anterior)
 
@@ -182,17 +241,21 @@ def relatorio_semana(gastos: list, semanas_atras: int = 0) -> str:
 
     linhas = [
         f"📅 *{label}* ({seg_ref.strftime('%d/%m')} — {dom_ref.strftime('%d/%m')})",
-        f"💰 Total: R$ {total:.2f}",
+        f"💰 Total: {fmt(total)}",
         frase_analise(total, total_ant, cats, cats_ant),
         "", "*🗂️ Por categoria:*",
     ]
     for cat, val in cats.items():
-        linhas.append(f"  • {cat}: R$ {val:.2f} {indicador(val, cats_ant.get(cat, 0))}")
+        linhas.append(f"  • {cat}: {fmt(val)} {indicador(val, cats_ant.get(cat, 0))}")
 
     if total_ant > 0:
-        linhas += ["", f"📅 *{label_ant}* ({seg_ant.strftime('%d/%m')} — {dom_ant.strftime('%d/%m')}): R$ {total_ant:.2f}", "*🗂️ Por categoria:*"]
+        linhas += [
+            "",
+            f"📅 *{label_ant}* ({seg_ant.strftime('%d/%m')} — {dom_ant.strftime('%d/%m')}): {fmt(total_ant)}",
+            "*🗂️ Por categoria:*",
+        ]
         for cat, val in cats_ant.items():
-            linhas.append(f"  • {cat}: R$ {val:.2f}")
+            linhas.append(f"  • {cat}: {fmt(val)}")
 
     return "\n".join(linhas)
 
@@ -201,24 +264,28 @@ def relatorio_mes(gastos: list, mes: int, ano: int) -> str:
     inicio, fim, inicio_ant, fim_ant = datas_mes(mes, ano)
     periodo = filtrar_por_periodo(gastos, inicio, fim)
     anterior = filtrar_por_periodo(gastos, inicio_ant, fim_ant)
-    total = sum(float(g["Valor"]) for g in periodo)
-    total_ant = sum(float(g["Valor"]) for g in anterior)
+    total = total_gastos(periodo)
+    total_ant = total_gastos(anterior)
     cats = resumo_por_categoria(periodo)
     cats_ant = resumo_por_categoria(anterior)
 
     linhas = [
-        f"📆 *{inicio.strftime('%B %Y').capitalize()}*",
-        f"💰 Total: R$ {total:.2f}",
+        f"📆 *{nome_mes(inicio)}*",
+        f"💰 Total: {fmt(total)}",
         frase_analise(total, total_ant, cats, cats_ant),
         "", "*🗂️ Por categoria:*",
     ]
     for cat, val in cats.items():
-        linhas.append(f"  • {cat}: R$ {val:.2f} {indicador(val, cats_ant.get(cat, 0))}")
+        linhas.append(f"  • {cat}: {fmt(val)} {indicador(val, cats_ant.get(cat, 0))}")
 
     if total_ant > 0:
-        linhas += ["", f"📅 *{inicio_ant.strftime('%B %Y').capitalize()}:* R$ {total_ant:.2f}", "*🗂️ Por categoria:*"]
+        linhas += [
+            "",
+            f"📅 *{nome_mes(inicio_ant)}:* {fmt(total_ant)}",
+            "*🗂️ Por categoria:*",
+        ]
         for cat, val in cats_ant.items():
-            linhas.append(f"  • {cat}: R$ {val:.2f}")
+            linhas.append(f"  • {cat}: {fmt(val)}")
 
     return "\n".join(linhas)
 
@@ -226,25 +293,25 @@ def relatorio_mes(gastos: list, mes: int, ano: int) -> str:
 def relatorio_cartoes(gastos: list, mes: int, ano: int) -> str:
     inicio, fim, _, _ = datas_mes(mes, ano)
     periodo = filtrar_por_periodo(gastos, inicio, fim)
-    total = sum(float(g["Valor"]) for g in periodo)
+    total = total_gastos(periodo)
     cartoes = resumo_por_cartao(periodo)
 
     linhas = [
-        f"💳 *Resumo por cartão — {inicio.strftime('%B %Y').capitalize()}*",
-        f"💰 Total: R$ {total:.2f}", "",
+        f"💳 *Resumo por cartão — {nome_mes(inicio)}*",
+        f"💰 Total: {fmt(total)}", "",
     ]
     for cartao, val in cartoes.items():
         pct = (val / total * 100) if total > 0 else 0
-        linhas.append(f"  • {cartao}: R$ {val:.2f} ({pct:.0f}%)")
+        linhas.append(f"  • {cartao}: {fmt(val)} ({pct:.0f}%)")
 
     return "\n".join(linhas)
 
 
-claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 
 def interpretar_gasto(mensagem: str) -> dict | None:
-    hoje = datetime.now().strftime("%Y-%m-%d")
+    hoje = hoje_meia_noite().strftime("%Y-%m-%d")
     prompt = f"""Você é um assistente de controle de gastos pessoais.
 O usuário enviou: "{mensagem}"
 Data de hoje: {hoje}
@@ -252,18 +319,18 @@ Data de hoje: {hoje}
 Se for um gasto, responda APENAS com JSON válido:
 {{"descricao": "...", "categoria": "...", "confianca": "alta|baixa", "categorias_alternativas": [], "valor": 0.00, "data": "YYYY-MM-DD", "cartao": "..."}}
 
-Categorias: {", ".join(CATEGORIAS)}
-Cartões: {", ".join(CARTOES)}
+Categorias disponíveis: {", ".join(CATEGORIAS)}
+Cartões disponíveis: {", ".join(CARTOES)}
 
 Regras:
 - Se não mencionar data, use hoje ({hoje})
-- Valor deve ser número float (sem R$)
+- Valor deve ser número float usando PONTO como decimal (ex: 147,01 → 147.01, 1.500,00 → 1500.00)
 - cartao: detecte XP, C6, Ifood, Inter, Nubank na mensagem. Se não mencionar, use "Sem cartão"
-- confianca "alta" se categoria for óbvia, "baixa" se houver dúvida
+- confianca "alta" se a categoria for óbvia, "baixa" se houver dúvida
 - Se confianca "baixa", liste até 3 opções em categorias_alternativas
 - Se NÃO for um gasto, responda: null"""
 
-    response = claude.messages.create(
+    response = claude_client.messages.create(
         model="claude-opus-4-5",
         max_tokens=300,
         messages=[{"role": "user", "content": prompt}]
@@ -294,29 +361,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text.strip()
     texto_lower = texto.lower()
 
-    # Confirmação de categoria pendente
     if context.user_data.get("pending_gasto"):
         pending = context.user_data["pending_gasto"]
         categoria_escolhida = next(
-            (cat for cat in CATEGORIAS if cat.lower() == texto_lower or texto_lower == cat.lower()[:len(texto_lower)]),
-            None
+            (cat for cat in CATEGORIAS if cat.lower() == texto_lower), None
         )
         if categoria_escolhida:
             try:
                 salvar_gasto(pending["data"], pending["descricao"], categoria_escolhida, pending["valor"], pending["cartao"])
                 emoji = EMOJI_CAT.get(categoria_escolhida, "💸")
                 await update.message.reply_text(
-                    f"{emoji} *{categoria_escolhida}* registrado!\n📝 {pending['descricao']}\n💰 R$ {float(pending['valor']):.2f}\n📅 {pending['data']}\n💳 {pending['cartao']}",
+                    f"{emoji} *{categoria_escolhida}* registrado!\n📝 {pending['descricao']}\n💰 {fmt(float(pending['valor']))}\n📅 {pending['data']}\n💳 {pending['cartao']}",
                     parse_mode="Markdown"
                 )
-                context.user_data.pop("pending_gasto")
             except Exception as e:
                 logger.error(f"Erro ao salvar: {e}", exc_info=True)
                 await update.message.reply_text("❌ Erro ao salvar.")
-                context.user_data.pop("pending_gasto")
+            context.user_data.pop("pending_gasto")
         else:
             opts = " / ".join(pending.get("categorias_alternativas", []))
-            await update.message.reply_text(f"❓ Não reconheci. Escolha: {opts}")
+            await update.message.reply_text(f"❓ Não reconheci. Escolha uma:\n{opts}")
         return
 
     if any(p in texto_lower for p in ["menu", "ajuda", "help", "comandos"]):
@@ -348,11 +412,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if any(p in texto_lower for p in ["histórico", "historico", "total geral", "todos os gastos"]):
         gastos = buscar_todos_gastos()
-        total = sum(float(g["Valor"]) for g in gastos)
+        total = total_gastos(gastos)
         cats = resumo_por_categoria(gastos)
-        linhas = [f"📊 *Histórico completo*", f"💰 Total geral: R$ {total:.2f}", "", "*🗂️ Por categoria:*"]
+        linhas = [f"📊 *Histórico completo*", f"💰 Total geral: {fmt(total)}", "", "*🗂️ Por categoria:*"]
         for cat, val in cats.items():
-            linhas.append(f"  • {cat}: R$ {val:.2f}")
+            linhas.append(f"  • {cat}: {fmt(val)}")
         await update.message.reply_text("\n".join(linhas), parse_mode="Markdown")
         return
 
@@ -394,7 +458,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         salvar_gasto(gasto["data"], gasto["descricao"], gasto["categoria"], gasto["valor"], cartao)
         emoji = EMOJI_CAT.get(gasto["categoria"], "💸")
         await update.message.reply_text(
-            f"{emoji} *{gasto['categoria']}* registrado!\n📝 {gasto['descricao']}\n💰 R$ {float(gasto['valor']):.2f}\n📅 {gasto['data']}\n💳 {cartao}",
+            f"{emoji} *{gasto['categoria']}* registrado!\n📝 {gasto['descricao']}\n💰 {fmt(float(gasto['valor']))}\n📅 {gasto['data']}\n💳 {cartao}",
             parse_mode="Markdown"
         )
     except Exception as e:
