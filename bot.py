@@ -71,10 +71,8 @@ def parse_valor(valor) -> float:
     s = str(valor).strip().replace("R$", "").replace(" ", "")
     if not s:
         return 0.0
-    # Formato brasileiro com milhar e decimal: 1.500,00
     if "." in s and "," in s:
         s = s.replace(".", "").replace(",", ".")
-    # Só vírgula: decimal brasileiro 147,01
     elif "," in s:
         s = s.replace(",", ".")
     return float(s)
@@ -121,7 +119,10 @@ def salvar_gasto(data: str, descricao: str, categoria: str, valor: float, cartao
 
 
 def buscar_todos_gastos() -> list:
-    return get_sheet().get_all_records()
+    ws = get_sheet()
+    records = ws.get_all_records(numericise_ignore=['all'])
+    logger.info(f"Amostra de dados lidos: {records[:2] if records else '[]'}")
+    return records
 
 
 def filtrar_por_periodo(gastos: list, inicio: datetime, fim: datetime) -> list:
@@ -174,13 +175,14 @@ def indicador(atual: float, anterior: float) -> str:
     if anterior == 0:
         return "🆕 novo"
     variacao = ((atual - anterior) / anterior) * 100
+    diff = atual - anterior
     if variacao > 10:
         if variacao > 300:
-            return f"📈 +{fmt(atual - anterior)}"
+            return f"📈 +{fmt(diff)}"
         return f"📈 +{variacao:.0f}%"
     elif variacao < -10:
         if variacao < -300:
-            return f"📉 -{fmt(anterior - atual)}"
+            return f"📉 -{fmt(abs(diff))}"
         return f"📉 {variacao:.0f}%"
     return "➡️ em linha"
 
@@ -243,7 +245,8 @@ def relatorio_semana(gastos: list, semanas_atras: int = 0) -> str:
         f"📅 *{label}* ({seg_ref.strftime('%d/%m')} — {dom_ref.strftime('%d/%m')})",
         f"💰 Total: {fmt(total)}",
         frase_analise(total, total_ant, cats, cats_ant),
-        "", "*🗂️ Por categoria:*",
+        "",
+        "*🗂️ Por categoria:*",
     ]
     for cat, val in cats.items():
         linhas.append(f"  • {cat}: {fmt(val)} {indicador(val, cats_ant.get(cat, 0))}")
@@ -273,7 +276,8 @@ def relatorio_mes(gastos: list, mes: int, ano: int) -> str:
         f"📆 *{nome_mes(inicio)}*",
         f"💰 Total: {fmt(total)}",
         frase_analise(total, total_ant, cats, cats_ant),
-        "", "*🗂️ Por categoria:*",
+        "",
+        "*🗂️ Por categoria:*",
     ]
     for cat, val in cats.items():
         linhas.append(f"  • {cat}: {fmt(val)} {indicador(val, cats_ant.get(cat, 0))}")
@@ -298,7 +302,8 @@ def relatorio_cartoes(gastos: list, mes: int, ano: int) -> str:
 
     linhas = [
         f"💳 *Resumo por cartão — {nome_mes(inicio)}*",
-        f"💰 Total: {fmt(total)}", "",
+        f"💰 Total: {fmt(total)}",
+        "",
     ]
     for cartao, val in cartoes.items():
         pct = (val / total * 100) if total > 0 else 0
@@ -324,7 +329,8 @@ Cartões disponíveis: {", ".join(CARTOES)}
 
 Regras:
 - Se não mencionar data, use hoje ({hoje})
-- Valor deve ser número float usando PONTO como decimal (ex: 147,01 → 147.01, 1.500,00 → 1500.00)
+- Valor deve ser número float usando PONTO como decimal. Exemplos: "35,50" → 35.50 | "1.500,00" → 1500.00 | "147,01" → 147.01
+- NUNCA remova a vírgula decimal: "147,01" é cento e quarenta e sete reais e um centavo = 147.01
 - cartao: detecte XP, C6, Ifood, Inter, Nubank na mensagem. Se não mencionar, use "Sem cartão"
 - confianca "alta" se a categoria for óbvia, "baixa" se houver dúvida
 - Se confianca "baixa", liste até 3 opções em categorias_alternativas
